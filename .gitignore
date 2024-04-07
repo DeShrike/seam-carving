@@ -1,0 +1,7 @@
+*.o
+*.png
+build
+*.so
+raytrees
+*.mp4
+
