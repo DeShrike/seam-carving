@@ -2,16 +2,16 @@ CC = gcc
 LIBS = -lpng -lm
 FLAGS = -O3 -Wall
 
-all: car
+all: sc
 
-car: car.o image.o
-	$(CC) car.o image.o -o car $(LIBS)
+sc: sc.o image.o
+	$(CC) sc.o image.o -o sc $(LIBS)
 
 image.o: image.c image.h
 	$(CC) $(FLAGS) -c $<
 
-car.o: car.c image.h
+sc.o: sc.c image.h
 	$(CC) -c $< $(FLAGS)
 
 clean:
-	rm -v *.o car
+	rm -v *.o sc
