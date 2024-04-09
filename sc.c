@@ -1,3 +1,4 @@
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@
 
 static char temp_str[100];
 
+// The Sobel operators
 static float gx[3][3] = { 
    { 1.0, 0.0, -1.0 },
    { 2.0, 0.0, -2.0 },
@@ -80,6 +82,21 @@ float rgb_to_luminance(uint32_t rgb)
    return to_luminance(r, g, b);;
 }
 
+inline float min(float a, float b)
+{
+   return a < b ? a : b;
+}
+
+inline float max(float a, float b)
+{
+   return a > b ? a : b;
+}
+
+float smallest(float a, float b, float c)
+{
+   return min(a, min(b, c));
+}
+
 Image calc_luminance(Image input)
 {
    float *luminance = malloc(sizeof(*luminance) * input.width * input.height);
@@ -118,6 +135,7 @@ Image calc_sobel(Image input)
    printf("Creating %u x %u sobel image\n", input.width, input.height);
    Image out_image = alloc_image(input.width, input.height);
 
+   int mx = -10000, mn = 10000;
    int r, g, b;
    for (int cx = 0; cx < input.width; ++cx)
    {
@@ -143,7 +161,127 @@ Image calc_sobel(Image input)
          }
 
          int color = sqrt(sobelx * sobelx + sobely * sobely);
+         if (color > 255) color = 255;
+         if (color > mx) mx = color;
+         if (color < mn) mn = color;
          set_pixel(out_image, cx, cy, color, color, color);
+      }
+   }
+
+   // printf("mx = %d, mn = %d\n", mx, mn);
+
+   return out_image;
+}
+
+Image calc_seam(Image input, int *seam)
+{
+   printf("Creating %u x %u dp image\n", input.width, input.height);
+   Image out_image = alloc_image(input.width, input.height);
+
+   float *dp = malloc(sizeof(*dp) * input.width * input.height);
+
+   int r, g, b;
+   for (int cx = 0; cx < input.width; ++cx)
+   {
+      get_pixel(input, cx, 0, &r, &g, &b);
+      dp[cx] = r / 255.0;
+   }
+
+   float mn = FLT_MAX;
+   float mx = -FLT_MAX;
+   for (int cy = 1; cy < input.height; ++cy)
+   {
+      for (int cx = 0; cx < input.width; ++cx)
+      {
+         get_pixel(input, cx, cy, &r, &g, &b);
+         float current = r / 255.0;
+
+         float i = dp[cx + (input.width * (cy - 1))];
+         float j = cx > 0 ? dp[cx + (input.width * (cy - 1)) - 1] : i;
+         float k = cx < (input.width - 1) ? dp[cx + (input.width * (cy - 1)) + 1] : i;
+
+         float minimum = smallest(i, j, k);
+         float color = minimum + current;
+
+         if (color > mx) mx = color;
+         if (color < mn) mn = color;
+
+         dp[cx + (input.width * cy)] = color;
+      }
+   }
+
+   for (int cy = 0; cy < input.height; ++cy)
+   {
+      for (int cx = 0; cx < input.width; ++cx)
+      {
+         float current = dp[cx + (input.width * cy)];
+         float normalized = (current - mn) / (mx - mn);
+         dp[cx + (input.width * cy)] = normalized;
+         set_pixel(out_image, cx, cy, normalized * 255, normalized * 255, normalized * 255);
+      }
+   }
+
+   // find path through image
+   int x = 0;
+   for (int cx  = 0; cx < input.width; ++cx)
+   {
+      if (dp[cx + (input.width * (input.height - 1))] < dp[x + (input.width * (input.height - 1))])
+      {
+         x = cx;
+      }
+   }
+
+   set_pixel(out_image, x, input.height - 1, 255, 0, 0);
+   seam[input.height - 1] = x;
+
+   for (int cy = input.height - 2; cy >= 0; --cy)
+   {
+      float i = dp[x + (input.width * (cy))];
+      float j = x > 0 ? dp[x + (input.width * (cy)) - 1] : i;
+      float k = x < (input.width - 1) ? dp[x + (input.width * (cy)) + 1] : i;
+      float minimum = smallest(i, j, k);
+      if (minimum == i)
+      {
+         x = x;
+      }
+      else if (minimum == j)
+      {
+         x = x - 1;
+      }
+      else if (minimum == k)
+      {
+         x = x + 1;
+      }
+
+      set_pixel(out_image, x, cy, 255, 0, 0);
+      seam[cy] = x;
+   }
+
+   free(dp);
+   return out_image;
+}
+
+Image remove_seam(Image input, int *seam)
+{
+   printf("Creating %u x %u shrunk image\n", input.width - 1, input.height);
+   Image out_image = alloc_image(input.width - 1, input.height);
+
+   for (int cy = 0; cy < input.height; ++cy)
+   {
+      for (int cx = 0; cx < input.width - 1; ++cx)
+      {
+         int r, g, b;
+         int x = seam[cy];
+         if (cx < x)
+         {
+            get_pixel(input, cx, cy, &r, &g, &b);
+            set_pixel(out_image, cx, cy, r, g, b);
+         }
+         else
+         {
+            get_pixel(input, cx + 1, cy, &r, &g, &b);
+            set_pixel(out_image, cx, cy, r, g, b);
+         }
       }
    }
 
@@ -152,19 +290,39 @@ Image calc_sobel(Image input)
 
 void process(Image input, const char *input_file_path)
 {
+   const char *output_file_path;
+
    Image lum = calc_luminance(input);
 
-   const char *output_file_path = add_infix(input_file_path, ".lum");
+   output_file_path = add_infix(input_file_path, ".lum");
    printf("Saving %s\n", output_file_path);
    write_png_file(output_file_path, lum);
 
    Image sobel = calc_sobel(lum);
+
    output_file_path = add_infix(input_file_path, ".sobel");
    printf("Saving %s\n", output_file_path);
    write_png_file(output_file_path, sobel);
 
-   free_image(lum);
+   int* seam = malloc(sizeof(int) * input.height);
+   Image seam_image = calc_seam(sobel, seam);
+
+   output_file_path = add_infix(input_file_path, ".seam");
+   printf("Saving %s\n", output_file_path);
+   write_png_file(output_file_path, seam_image);
+
+   Image shrunk = remove_seam(input, seam);
+
+   output_file_path = add_infix(input_file_path, ".shrunk");
+   printf("Saving %s\n", output_file_path);
+   write_png_file(output_file_path, shrunk);
+
+   free(seam);
+
+   free_image(shrunk);
+   free_image(seam_image);
    free_image(sobel);
+   free_image(lum);
 }
 
 int main(int argc, char **argv)
