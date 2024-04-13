@@ -11,37 +11,39 @@
 
 #define PIXEL(i, x, y) i.row_pointers[y][x]
 
+//#define DEBUG
+
 static char temp_str[100];
 
 // The Sobel operators
-static float gx[3][3] = { 
+static float gx[3][3] = {
    { 1.0, 0.0, -1.0 },
    { 2.0, 0.0, -2.0 },
    { 1.0, 0.0, -1.0 }
 };
 
-static float gy[3][3] = { 
+static float gy[3][3] = {
    { 1.0, 2.0, 1.0 },
    { 0.0, 0.0, 0.0 },
    { -1.0, -2.0, -1.0 }
 };
 
-bool is_png(const char *filename)
+static bool is_png(const char *filename)
 {
    int ix = strrchr(filename, '.') - filename;
    return ix > 0 && strcmp(filename + ix, ".png") == 0;
 }
 
-char* add_infix(const char *filename, const char *infix)
+static char* add_infix(const char *filename, const char *infix)
 {
    strcpy(temp_str, filename);
    int ix = strrchr(filename, '.') - filename;
    strcpy(temp_str + ix, infix);
-   strcat(temp_str, ".png");  
+   strcat(temp_str, ".png");
    return temp_str;
 }
 
-void set_pixel(Image image, int x, int y, int r, int g, int b)
+static void set_pixel(Image image, int x, int y, int r, int g, int b)
 {
    image.row_pointers[y][x * 4 + 0] = r;
    image.row_pointers[y][x * 4 + 1] = g;
@@ -49,14 +51,14 @@ void set_pixel(Image image, int x, int y, int r, int g, int b)
    image.row_pointers[y][x * 4 + 3] = 255;
 }
 
-void get_pixel(Image image, int x, int y, int* r, int* g, int* b)
+static void get_pixel(Image image, int x, int y, int* r, int* g, int* b)
 {
    *r = image.row_pointers[y][x * 4 + 0];
    *g = image.row_pointers[y][x * 4 + 1];
    *b = image.row_pointers[y][x * 4 + 2];
 }
 
-char *args_shift(int *argc, char ***argv)
+static char *args_shift(int *argc, char ***argv)
 {
     assert(*argc > 0);
     char *result = **argv;
@@ -65,7 +67,7 @@ char *args_shift(int *argc, char ***argv)
     return result;
 }
 
-float to_luminance(int r, int g, int b)
+static float to_luminance(int r, int g, int b)
 {
    float rr = r / 255.0;
    float gg = g / 255.0;
@@ -73,7 +75,8 @@ float to_luminance(int r, int g, int b)
    return 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
 }
 
-float rgb_to_luminance(uint32_t rgb)
+/*
+static float rgb_to_luminance(uint32_t rgb)
 {
    float r = ((rgb >> (8 * 0)) & 0x00FF) / 255.0;
    float g = ((rgb >> (8 * 1)) & 0x00FF) / 255.0;
@@ -81,6 +84,7 @@ float rgb_to_luminance(uint32_t rgb)
 
    return to_luminance(r, g, b);;
 }
+*/
 
 inline float min(float a, float b)
 {
@@ -92,7 +96,7 @@ inline float max(float a, float b)
    return a > b ? a : b;
 }
 
-float smallest(float a, float b, float c)
+inline float smallest(float a, float b, float c)
 {
    return min(a, min(b, c));
 }
@@ -112,7 +116,9 @@ Image calc_luminance(Image input)
       }
    }
 
+#ifdef DEBUG
    printf("Creating %u x %u luminance image\n", input.width, input.height);
+#endif
    Image out_image = alloc_image(input.width, input.height);
 
    for (int x = 0; x < input.width; ++x)
@@ -132,7 +138,9 @@ Image calc_luminance(Image input)
 
 Image calc_sobel(Image input)
 {
+#ifdef DEBUG
    printf("Creating %u x %u sobel image\n", input.width, input.height);
+#endif
    Image out_image = alloc_image(input.width, input.height);
 
    int mx = -10000, mn = 10000;
@@ -153,7 +161,7 @@ Image calc_sobel(Image input)
                   xx = cx;
                   yy = cy;
                }
-               
+
                get_pixel(input, xx, yy, &r, &g, &b);
                sobelx += gx[dx + 1][dy + 1] * r;
                sobely += gy[dx + 1][dy + 1] * r;
@@ -175,7 +183,9 @@ Image calc_sobel(Image input)
 
 Image calc_seam(Image input, int *seam)
 {
+#ifdef DEBUG
    printf("Creating %u x %u dp image\n", input.width, input.height);
+#endif
    Image out_image = alloc_image(input.width, input.height);
 
    float *dp = malloc(sizeof(*dp) * input.width * input.height);
@@ -263,7 +273,9 @@ Image calc_seam(Image input, int *seam)
 
 Image remove_seam(Image input, int *seam)
 {
+#ifdef DEBUG
    printf("Creating %u x %u shrunk image\n", input.width - 1, input.height);
+#endif
    Image out_image = alloc_image(input.width - 1, input.height);
 
    for (int cy = 0; cy < input.height; ++cy)
@@ -323,6 +335,52 @@ void process(Image input, const char *input_file_path)
    free_image(seam_image);
    free_image(sobel);
    free_image(lum);
+
+   free_image(input);
+}
+
+void process2(Image input, const char *input_file_path)
+{
+   const char *output_file_path;
+
+   int steps = 300;
+
+   Image lum = calc_luminance(input);
+   for (int i = 1; i <= steps; ++i)
+   {
+      printf("Step %u of %u\n", i, steps);
+
+      Image sobel = calc_sobel(lum);
+      
+      int* seam = malloc(sizeof(int) * input.height);
+      Image seam_image = calc_seam(sobel, seam);
+      free_image(seam_image);
+
+      free_image(sobel);
+
+      Image shrunk = remove_seam(input, seam);
+      Image lum2 = remove_seam(lum, seam);
+   
+      free(seam);
+
+      free_image(lum);
+      lum = lum2;
+
+      free_image(input);
+
+      input = shrunk;
+
+      if (i == steps)
+      {
+         output_file_path = add_infix(input_file_path, ".shrunk");
+         printf("Saving %s\n", output_file_path);
+         write_png_file(output_file_path, input);
+      }
+
+   }
+
+   free_image(lum);
+   free_image(input);
 }
 
 int main(int argc, char **argv)
@@ -344,7 +402,7 @@ int main(int argc, char **argv)
    {
       fprintf(stderr, "ERROR: %s is not a PNG file\n", input_file_path);
       return 1;
-   }   
+   }
 
    printf("Reading %s\n", input_file_path);
    Image i = read_png_file(input_file_path);
@@ -357,8 +415,8 @@ int main(int argc, char **argv)
       abort();
    }
 
-   process(i, input_file_path);
+   //process(i, input_file_path);
+   process2(i, input_file_path);
 
-   free_image(i);
    return 0;
 }

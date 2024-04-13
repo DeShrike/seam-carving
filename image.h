@@ -3,7 +3,7 @@
 
 #include "png.h"
 
-typedef struct 
+typedef struct
 {
 	int width, height;
 	png_byte color_type;
