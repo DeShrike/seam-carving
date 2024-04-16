@@ -1,6 +1,7 @@
 *.o
 *.png
-build
+*.jpg
 *.so
 sc
 *.mp4
+!images/horses.png
